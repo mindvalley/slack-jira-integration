@@ -15,6 +15,14 @@ from flask import Flask
 from flask import request
 from flask import make_response
 
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+from jira import JIRA
+
+jira = JIRA("https://mindvalley.atlassian.net", basic_auth=('andre', 'zaqwsx123!@#'))
+
+
 # Flask app should start in global layout
 app = Flask(__name__)
 
@@ -29,79 +37,69 @@ def webhook():
     res = processRequest(req)
 
     res = json.dumps(res, indent=4)
-    # print(res)
     r = make_response(res)
     r.headers['Content-Type'] = 'application/json'
     return r
 
 
 def processRequest(req):
-    if req.get("result").get("action") != "yahooWeatherForecast":
+    newTicket = createTicket(req)
+    if newTicket is None:
         return {}
-    baseurl = "https://query.yahooapis.com/v1/public/yql?"
-    yql_query = makeYqlQuery(req)
-    if yql_query is None:
-        return {}
-    yql_url = baseurl + urlencode({'q': yql_query}) + "&format=json"
-    result = urlopen(yql_url).read()
-    data = json.loads(result)
-    res = makeWebhookResult(data)
+    res = makeWebhookResult(newTicket)
     return res
 
 
-def makeYqlQuery(req):
-    result = req.get("result")
-    parameters = result.get("parameters")
-    city = parameters.get("geo-city")
-    if city is None:
-        return None
+def createTicket(req):
 
-    return "select * from weather.forecast where woeid in (select woeid from geo.places(1) where text='" + city + "')"
+    #read request
+    contexts = req.get("contexts")
+    print(json.dumps(contexts))
+    for context in contexts:
+        if (context.get("name") == "creating-ticket") :
+            result = req.get("contexts")[0]
+            title = result.get("title")
+            team = result.get("team")
+            issueTypeName = result.get("ticket")[0]
+            action = result.get("action")
+            expected = result.get("expected")
+            actual = result.get("actual")
+            projectName = "SLACK"
 
+            new_issue = jira.create_issue(
+                project='SLACK',
+                summary=title,
+                description='"description": "Steps taken:%s"\n\nExpected Behavior: %s\n\nActual Behavior: %s,"issuetype": {"name": "%s"} }}' % (title, action, expected, actual),
+                issuetype={'name': issueTypeName})
 
-def makeWebhookResult(data):
-    query = data.get('query')
-    if query is None:
-        return {}
+            return new_issue
 
-    result = query.get('results')
-    if result is None:
-        return {}
+    return None
 
-    channel = result.get('channel')
-    if channel is None:
-        return {}
+def makeWebhookResult(newTicket):
 
-    item = channel.get('item')
-    location = channel.get('location')
-    units = channel.get('units')
-    if (location is None) or (item is None) or (units is None):
-        return {}
+    # for field in newTicket.raw['fields']:
+    #     print("Field:", field, "Value:", newTicket.raw['fields'][field])
 
-    condition = item.get('condition')
-    if condition is None:
-        return {}
-
-    # print(json.dumps(item, indent=4))
-
-    speech = "Today in " + location.get('city') + ": " + condition.get('text') + \
-             ", the temperature is " + condition.get('temp') + " " + units.get('temperature')
-
-    print("Response:")
-    print(speech)
+    speech = "Ticket created: " +newTicket
 
     return {
         "speech": speech,
         "displayText": speech,
         # "data": data,
         # "contextOut": [],
-        "source": "apiai-weather-webhook-sample"
+        "source": "apiai-jira-mindvalley-integration"
     }
-
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
 
+    #payload = {"somekey":'somevalue'}
+
+    #json.dumps(payload)
+
+    #request.post('localhost:5000', data=payload)
+
     print("Starting app on port %d" % port)
 
-    app.run(debug=False, port=port, host='0.0.0.0')
+    app.run(debug=False, port=port, host='localhost')
